@@ -212,7 +212,7 @@ const TestPage: React.FC = () => {
 
       if (editingQuestion) {
         // For editing, we need to handle this differently since we're using FormData
-        const response = await fetch(`${process.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com'}/test-questions/${editingQuestion._id}`, {
+        const response = await fetch(`${import.meta.env.VITE_API_URL || import.meta.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com'}/test-questions/${editingQuestion._id}`, {
           method: 'PUT',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -224,7 +224,7 @@ const TestPage: React.FC = () => {
           throw new Error('Failed to update question');
         }
       } else {
-        const response = await fetch(`${process.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com'}/test-questions`, {
+        const response = await fetch(`${import.meta.env.VITE_API_URL || import.meta.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com'}/test-questions`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`
@@ -313,7 +313,7 @@ const TestPage: React.FC = () => {
             .filter((id: string) => !!id)
         ));
 
-        const apiBase = (process.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com');
+        const apiBase = (import.meta.env.VITE_API_URL || import.meta.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com');
         const userMap: Record<string, { name?: string; contact_no?: string }> = {};
         await Promise.all(
           uniqueUserIds.map(async (uid) => {
@@ -665,7 +665,7 @@ const TestPage: React.FC = () => {
                           {question.image_url && (
                             <div className="mb-4">
                               <img 
-                                src={`${process.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com'}/${question.image_url}`} 
+                                src={`${import.meta.env.VITE_API_URL || import.meta.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com'}/${question.image_url}`} 
                                 alt="Question image" 
                                 className="max-w-full h-auto max-h-64 rounded border"
                               />
@@ -678,12 +678,12 @@ const TestPage: React.FC = () => {
                                 {question.description_images.map((imageUrl: string, imgIndex: number) => (
                                   <img 
                                     key={imgIndex}
-                                    src={`${process.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com'}/${imageUrl}`} 
+                                    src={`${import.meta.env.VITE_API_URL || import.meta.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com'}/${imageUrl}`} 
                                     alt={`Description image ${imgIndex + 1}`} 
                                     className="w-full h-24 object-cover rounded border cursor-pointer hover:opacity-80"
                                     onClick={() => {
                                       // Open image in new tab for full view
-                                      window.open(`${process.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com'}/${imageUrl}`, '_blank');
+                                      window.open(`${import.meta.env.VITE_API_URL || import.meta.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com'}/${imageUrl}`, '_blank');
                                     }}
                                   />
                                 ))}
@@ -788,18 +788,32 @@ const TestPage: React.FC = () => {
                     multiple
                     className="border rounded-lg px-3 py-2 w-full focus:ring-2 focus:ring-green-500 focus:border-green-500" 
                     onChange={(e) => {
-                      const files = Array.from(e.target.files || []);
-                      setDescriptionImages(files);
+                      const newFiles = Array.from(e.target.files || []);
+                      // Append new files to existing ones instead of replacing
+                      setDescriptionImages(prev => [...prev, ...newFiles]);
+                      // Reset input to allow selecting same files again
+                      e.target.value = '';
                     }} 
                   />
                   {descriptionImages.length > 0 && (
                     <div className="mt-2">
-                      <p className="text-sm text-gray-600">Selected {descriptionImages.length} image(s):</p>
-                      <ul className="text-xs text-gray-500 mt-1">
+                      <p className="text-sm text-gray-600 mb-2">Selected {descriptionImages.length} image(s):</p>
+                      <div className="space-y-1">
                         {descriptionImages.map((file, index) => (
-                          <li key={index} className="truncate">• {file.name}</li>
+                          <div key={index} className="flex items-center justify-between bg-gray-50 p-2 rounded border">
+                            <span className="text-xs text-gray-700 truncate flex-1">• {file.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDescriptionImages(prev => prev.filter((_, i) => i !== index));
+                              }}
+                              className="ml-2 text-red-600 hover:text-red-800 text-xs font-medium px-2 py-1 rounded hover:bg-red-50"
+                            >
+                              Remove
+                            </button>
+                          </div>
                         ))}
-                      </ul>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -897,7 +911,7 @@ const TestPage: React.FC = () => {
                               formData.append('image', questionImage);
                             }
 
-                            const response = await fetch(`${process.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com'}/test-questions`, {
+                            const response = await fetch(`${import.meta.env.VITE_API_URL || import.meta.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com'}/test-questions`, {
                               method: 'POST',
                               headers: {
                                 'Authorization': `Bearer ${token}`
