@@ -12,17 +12,35 @@ const LoginPage: React.FC = () => {
   const { login } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement> | React.MouseEvent<HTMLButtonElement>): Promise<void> => {
-    e.preventDefault();
-    setIsLoading(true);
-    setError('');
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      setIsLoading(true);
+      setError('');
 
-    await new Promise(resolve => setTimeout(resolve, 500));
+      // Trim inputs to remove any whitespace
+      const trimmedUsername = username.trim();
+      const trimmedPassword = password.trim();
 
-    const success = login(username, password);
-    if (!success) {
-      setError('Invalid username or password');
+      if (!trimmedUsername || !trimmedPassword) {
+        setError('Please enter both username and password');
+        setIsLoading(false);
+        return;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      const success = login(trimmedUsername, trimmedPassword);
+      if (!success) {
+        setError('Invalid username or password');
+      }
+      setIsLoading(false);
+    } catch (error: any) {
+      console.error('Login error:', error);
+      setError(error?.message || 'An error occurred during login');
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   return (
@@ -87,7 +105,7 @@ const LoginPage: React.FC = () => {
             )}
 
             <button
-              onClick={handleSubmit}
+              type="submit"
               disabled={isLoading}
               className="w-full bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-white font-bold py-4 px-6 rounded-xl transition-all duration-200 transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg hover:shadow-xl"
             >
