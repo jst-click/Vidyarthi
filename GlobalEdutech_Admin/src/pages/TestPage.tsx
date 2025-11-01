@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import ApiService, { type TestItem } from '../services/apiService';
 import { useAuth } from '../context/AuthContext';
 
@@ -36,7 +36,13 @@ const TestPage: React.FC = () => {
     marks: 1
   });
   const [questionImage, setQuestionImage] = useState<File | null>(null);
+  const [questionImagePreview, setQuestionImagePreview] = useState<string | null>(null);
+  const [existingQuestionImageUrl, setExistingQuestionImageUrl] = useState<string | null>(null);
+  const [originalQuestionImageUrl, setOriginalQuestionImageUrl] = useState<string | null>(null); // Track original image before any updates
   const [descriptionImages, setDescriptionImages] = useState<File[]>([]);
+  const [descriptionImagePreviews, setDescriptionImagePreviews] = useState<string[]>([]);
+  const [existingDescriptionImageUrls, setExistingDescriptionImageUrls] = useState<string[]>([]);
+  const questionImageInputRef = useRef<HTMLInputElement>(null);
 
   // Filter options
   const difficultyLevels = ['Easy', 'Medium', 'Hard'];
@@ -96,6 +102,18 @@ const TestPage: React.FC = () => {
     return () => { active = false; };
   }, []);
 
+  // Cleanup object URLs when component unmounts or images change
+  useEffect(() => {
+    return () => {
+      if (questionImagePreview) {
+        URL.revokeObjectURL(questionImagePreview);
+      }
+      descriptionImagePreviews.forEach(preview => {
+        URL.revokeObjectURL(preview);
+      });
+    };
+  }, [questionImagePreview, descriptionImagePreviews]);
+
   const filtered = useMemo(() => {
     let filteredItems = items;
     
@@ -136,8 +154,20 @@ const TestPage: React.FC = () => {
 
   const resetQuestionForm = () => {
     setEditingQuestion(null);
+    // Cleanup preview URLs
+    if (questionImagePreview) {
+      URL.revokeObjectURL(questionImagePreview);
+    }
+    descriptionImagePreviews.forEach(preview => {
+      URL.revokeObjectURL(preview);
+    });
     setQuestionImage(null);
+    setQuestionImagePreview(null);
+    setExistingQuestionImageUrl(null);
+    setOriginalQuestionImageUrl(null);
     setDescriptionImages([]);
+    setDescriptionImagePreviews([]);
+    setExistingDescriptionImageUrls([]);
     setQuestionPayload({
       question: '',
       options: [
@@ -169,8 +199,40 @@ const TestPage: React.FC = () => {
         explanation: question.explanation || '',
         marks: question.marks
       });
-      setQuestionImage(null); // Reset image for editing
-      setDescriptionImages([]); // Reset description images for editing
+      // Cleanup preview URLs
+      if (questionImagePreview) {
+        URL.revokeObjectURL(questionImagePreview);
+      }
+      descriptionImagePreviews.forEach(preview => {
+        URL.revokeObjectURL(preview);
+      });
+      // Reset new file uploads
+      setQuestionImage(null);
+      setQuestionImagePreview(null);
+      setDescriptionImages([]);
+      setDescriptionImagePreviews([]);
+      // Set existing image URLs for display
+      const apiBase = import.meta.env.VITE_API_URL || import.meta.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com';
+      const currentImageUrl = question.image_url ? `${apiBase}/${question.image_url}` : null;
+      
+      // Check if this question has a stored original image (from previous edit session)
+      const storedOriginalImage = localStorage.getItem(`question_original_image_${question._id}`);
+      
+      // If there's a stored original image and current image is different, use stored one as original
+      if (storedOriginalImage && storedOriginalImage !== currentImageUrl) {
+        setOriginalQuestionImageUrl(storedOriginalImage);
+        setExistingQuestionImageUrl(currentImageUrl);
+      } else {
+        // First time editing or no previous original stored, current image is the original
+        setOriginalQuestionImageUrl(currentImageUrl);
+        setExistingQuestionImageUrl(currentImageUrl);
+      }
+      
+      setExistingDescriptionImageUrls(
+        question.description_images && question.description_images.length > 0
+          ? question.description_images.map((url: string) => `${apiBase}/${url}`)
+          : []
+      );
     } else {
       resetQuestionForm();
     }
@@ -192,7 +254,15 @@ const TestPage: React.FC = () => {
     try {
       const formData = new FormData();
       formData.append('test_id', selectedTest._id);
-      formData.append('question_number', (questions.length + 1).toString());
+      // Calculate next question number properly - find max question_number and add 1
+      let nextQuestionNumber = 1;
+      if (!editingQuestion && questions.length > 0) {
+        const maxQuestionNumber = Math.max(...questions.map((q: any) => parseInt(q.question_number) || 0));
+        nextQuestionNumber = maxQuestionNumber + 1;
+      } else if (!editingQuestion) {
+        nextQuestionNumber = 1;
+      }
+      formData.append('question_number', editingQuestion ? editingQuestion.question_number.toString() : nextQuestionNumber.toString());
       formData.append('question', questionPayload.question);
       formData.append('options', JSON.stringify(questionPayload.options));
       formData.append('correct_answer', questionPayload.correct_answer);
@@ -211,6 +281,24 @@ const TestPage: React.FC = () => {
       }
 
       if (editingQuestion) {
+        // Store the original image URL before update (so we can show it after backend replaces it)
+        if (originalQuestionImageUrl) {
+          localStorage.setItem(`question_original_image_${editingQuestion._id}`, originalQuestionImageUrl);
+        }
+        
+        // For editing, handle existing images
+        // If existing image was removed and no new image uploaded, send a flag
+        if (!questionImage && !existingQuestionImageUrl && editingQuestion.image_url) {
+          // Existing image was removed - send empty blob to signal removal
+          formData.append('remove_image', 'true');
+          // Clear stored original image
+          localStorage.removeItem(`question_original_image_${editingQuestion._id}`);
+        }
+        // If existing description images were removed and no new ones uploaded, send flags
+        const originalDescImages = editingQuestion.description_images || [];
+        if (descriptionImages.length === 0 && existingDescriptionImageUrls.length < originalDescImages.length && originalDescImages.length > 0) {
+          formData.append('remove_description_images', 'true');
+        }
         // For editing, we need to handle this differently since we're using FormData
         const response = await fetch(`${import.meta.env.VITE_API_URL || import.meta.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com'}/test-questions/${editingQuestion._id}`, {
           method: 'PUT',
@@ -283,7 +371,14 @@ const TestPage: React.FC = () => {
     setQuestionsLoading(true);
     try {
       const res = await ApiService.getTestQuestions(testId);
-      setQuestions(res.questions || []);
+      const questionsList = res.questions || [];
+      // Sort questions by question_number to ensure proper sequence
+      questionsList.sort((a: any, b: any) => {
+        const numA = parseInt(a.question_number) || 0;
+        const numB = parseInt(b.question_number) || 0;
+        return numA - numB;
+      });
+      setQuestions(questionsList);
     } catch (e: any) {
       setError(e?.message || 'Failed to load questions');
     } finally {
@@ -654,11 +749,11 @@ const TestPage: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-6">
-                  {questions.map((question) => (
+                  {questions.map((question, index) => (
                     <div key={question._id} className="border rounded-lg p-4 bg-gray-50">
                       <div className="flex items-start gap-4">
                         <div className="flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center text-sm font-bold">
-                          {question.question_number}
+                          {index + 1}
                         </div>
                         <div className="flex-1">
                           <h4 className="font-semibold text-gray-900 mb-3">{question.question}</h4>
@@ -768,14 +863,101 @@ const TestPage: React.FC = () => {
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Question Image (Optional)</label>
                   <input 
+                    ref={questionImageInputRef}
                     type="file" 
                     accept="image/*"
                     className="border rounded-lg px-3 py-2 w-full focus:ring-2 focus:ring-green-500 focus:border-green-500" 
-                    onChange={(e) => setQuestionImage(e.target.files?.[0] || null)} 
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      if (file) {
+                        // Cleanup previous preview if exists
+                        if (questionImagePreview) {
+                          URL.revokeObjectURL(questionImagePreview);
+                        }
+                        setQuestionImage(file);
+                        setQuestionImagePreview(URL.createObjectURL(file));
+                        // Keep existing image URL visible - don't remove it, new image will be added
+                        // The existing image stays visible in the UI
+                      } else {
+                        if (questionImagePreview) {
+                          URL.revokeObjectURL(questionImagePreview);
+                        }
+                        setQuestionImage(null);
+                        setQuestionImagePreview(null);
+                      }
+                    }} 
                   />
-                  {questionImage && (
-                    <div className="mt-2">
-                      <p className="text-sm text-gray-600">Selected: {questionImage.name}</p>
+                  {(questionImagePreview || existingQuestionImageUrl || originalQuestionImageUrl) && (
+                    <div className="mt-3 space-y-3">
+                      {/* Show original/old image if it's different from current (was replaced) */}
+                      {originalQuestionImageUrl && originalQuestionImageUrl !== existingQuestionImageUrl && (
+                        <div>
+                          <p className="text-sm text-gray-600 mb-2">Original: {originalQuestionImageUrl.split('/').pop()}</p>
+                          <div className="relative inline-block">
+                            <img 
+                              src={originalQuestionImageUrl} 
+                              alt="Original question image" 
+                              className="max-w-full h-auto max-h-64 rounded-lg border border-gray-300 shadow-sm opacity-75"
+                            />
+                          </div>
+                        </div>
+                      )}
+                      {/* Show existing/current image if present */}
+                      {existingQuestionImageUrl && (
+                        <div>
+                          <p className="text-sm text-gray-600 mb-2">Current: {existingQuestionImageUrl.split('/').pop()}</p>
+                          <div className="relative inline-block">
+                            <img 
+                              src={existingQuestionImageUrl} 
+                              alt="Current question image" 
+                              className="max-w-full h-auto max-h-64 rounded-lg border border-gray-300 shadow-sm"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setExistingQuestionImageUrl(null);
+                                // If original exists and is different, restore it
+                                if (originalQuestionImageUrl && originalQuestionImageUrl !== existingQuestionImageUrl) {
+                                  setExistingQuestionImageUrl(originalQuestionImageUrl);
+                                }
+                              }}
+                              className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shadow-lg"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {/* Show new image if selected */}
+                      {questionImagePreview && (
+                        <div>
+                          <p className="text-sm text-gray-600 mb-2">New: {questionImage?.name}</p>
+                          <div className="relative inline-block">
+                            <img 
+                              src={questionImagePreview} 
+                              alt="New question preview" 
+                              className="max-w-full h-auto max-h-64 rounded-lg border border-gray-300 shadow-sm"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (questionImagePreview) {
+                                  URL.revokeObjectURL(questionImagePreview);
+                                }
+                                setQuestionImage(null);
+                                setQuestionImagePreview(null);
+                                // Reset file input
+                                if (questionImageInputRef.current) {
+                                  questionImageInputRef.current.value = '';
+                                }
+                              }}
+                              className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shadow-lg"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -789,28 +971,72 @@ const TestPage: React.FC = () => {
                     className="border rounded-lg px-3 py-2 w-full focus:ring-2 focus:ring-green-500 focus:border-green-500" 
                     onChange={(e) => {
                       const newFiles = Array.from(e.target.files || []);
-                      // Append new files to existing ones instead of replacing
+                      if (newFiles.length > 0) {
+                        // Create preview URLs for new files
+                        const newPreviews = newFiles.map(file => URL.createObjectURL(file));
+                        // Append new files and previews to existing ones instead of replacing
                       setDescriptionImages(prev => [...prev, ...newFiles]);
+                        setDescriptionImagePreviews(prev => [...prev, ...newPreviews]);
                       // Reset input to allow selecting same files again
                       e.target.value = '';
+                      }
                     }} 
                   />
-                  {descriptionImages.length > 0 && (
-                    <div className="mt-2">
-                      <p className="text-sm text-gray-600 mb-2">Selected {descriptionImages.length} image(s):</p>
-                      <div className="space-y-1">
+                  {(descriptionImages.length > 0 || existingDescriptionImageUrls.length > 0) && (
+                    <div className="mt-3">
+                      <p className="text-sm text-gray-600 mb-3">
+                        {descriptionImages.length + existingDescriptionImageUrls.length} image(s):
+                      </p>
+                      <div className="grid grid-cols-2 gap-3">
+                        {/* Existing description images */}
+                        {existingDescriptionImageUrls.map((url, index) => (
+                          <div key={`existing-${index}`} className="relative border border-gray-300 rounded-lg p-2 bg-gray-50">
+                            <div className="relative">
+                              <img 
+                                src={url} 
+                                alt={`Existing description image ${index + 1}`} 
+                                className="w-full h-auto max-h-48 rounded-lg object-contain"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  // Remove existing image URL
+                                  setExistingDescriptionImageUrls(prev => prev.filter((_, i) => i !== index));
+                                }}
+                                className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shadow-lg"
+                              >
+                                ×
+                              </button>
+                            </div>
+                            <p className="text-xs text-gray-600 mt-2 truncate">{url.split('/').pop()}</p>
+                          </div>
+                        ))}
+                        {/* New description images */}
                         {descriptionImages.map((file, index) => (
-                          <div key={index} className="flex items-center justify-between bg-gray-50 p-2 rounded border">
-                            <span className="text-xs text-gray-700 truncate flex-1">• {file.name}</span>
+                          <div key={`new-${index}`} className="relative border border-gray-300 rounded-lg p-2 bg-gray-50">
+                            <div className="relative">
+                              <img 
+                                src={descriptionImagePreviews[index]} 
+                                alt={`Description preview ${index + 1}`} 
+                                className="w-full h-auto max-h-48 rounded-lg object-contain"
+                              />
                             <button
                               type="button"
                               onClick={() => {
+                                  // Cleanup preview URL
+                                  if (descriptionImagePreviews[index]) {
+                                    URL.revokeObjectURL(descriptionImagePreviews[index]);
+                                  }
+                                  // Remove file and preview
                                 setDescriptionImages(prev => prev.filter((_, i) => i !== index));
+                                  setDescriptionImagePreviews(prev => prev.filter((_, i) => i !== index));
                               }}
-                              className="ml-2 text-red-600 hover:text-red-800 text-xs font-medium px-2 py-1 rounded hover:bg-red-50"
+                                className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shadow-lg"
                             >
-                              Remove
+                                ×
                             </button>
+                            </div>
+                            <p className="text-xs text-gray-600 mt-2 truncate">{file.name}</p>
                           </div>
                         ))}
                       </div>
@@ -900,7 +1126,13 @@ const TestPage: React.FC = () => {
                           try {
                             const formData = new FormData();
                             formData.append('test_id', selectedTest._id);
-                            formData.append('question_number', (questions.length + 1).toString());
+                            // Calculate next question number properly
+                            let nextQNum = 1;
+                            if (questions.length > 0) {
+                              const maxQNum = Math.max(...questions.map((q: any) => parseInt(q.question_number) || 0));
+                              nextQNum = maxQNum + 1;
+                            }
+                            formData.append('question_number', nextQNum.toString());
                             formData.append('question', questionPayload.question);
                             formData.append('options', JSON.stringify(questionPayload.options));
                             formData.append('correct_answer', questionPayload.correct_answer);

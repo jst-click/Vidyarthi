@@ -1001,11 +1001,52 @@ async def get_course(course_id: str):
     return {"course": serialize_object(course)}
 
 @app.put("/courses/{course_id}")
-async def update_course(course_id: str, course_data: dict):
-    course_data["updated_at"] = datetime.utcnow()
+async def update_course(
+    course_id: str,
+    name: str = Form(...),
+    title: str = Form(...),
+    description: str = Form(...),
+    category: str = Form(...),
+    sub_category: str = Form(...),
+    start_date: str = Form(...),
+    end_date: str = Form(...),
+    duration: str = Form(...),
+    instructor: str = Form(...),
+    price: float = Form(0),
+    thumbnail: Optional[UploadFile] = File(None)
+):
+    # Get existing course to preserve thumbnail if no new one is uploaded
+    existing_course = await db.courses.find_one({"_id": ObjectId(course_id)})
+    if not existing_course:
+        raise HTTPException(status_code=404, detail="Course not found")
+    
+    # Handle thumbnail upload
+    thumbnail_url = None
+    if thumbnail and thumbnail.filename:
+        thumbnail_url = await save_file(thumbnail, "courses")
+    
+    # If no new thumbnail uploaded, keep existing thumbnail_image
+    if not thumbnail_url and existing_course.get("thumbnail_image"):
+        thumbnail_url = existing_course["thumbnail_image"]
+    
+    course_dict = {
+        "name": name,
+        "title": title,
+        "description": description,
+        "category": category,
+        "sub_category": sub_category,
+        "start_date": datetime.fromisoformat(start_date.replace('Z', '+00:00')),
+        "end_date": datetime.fromisoformat(end_date.replace('Z', '+00:00')),
+        "duration": duration,
+        "instructor": instructor,
+        "price": price,
+        "thumbnail_image": thumbnail_url,
+        "updated_at": datetime.utcnow()
+    }
+    
     result = await db.courses.update_one(
         {"_id": ObjectId(course_id)},
-        {"$set": course_data}
+        {"$set": course_dict}
     )
     if result.modified_count == 0:
         raise HTTPException(status_code=404, detail="Course not found")
@@ -1287,7 +1328,9 @@ async def update_question(
     explanation: Optional[str] = Form(None),
     marks: int = Form(1),
     image: Optional[UploadFile] = File(None),
-    description_images: List[UploadFile] = File(default=[])
+    description_images: List[UploadFile] = File(default=[]),
+    remove_image: Optional[str] = Form(None),
+    remove_description_images: Optional[str] = Form(None)
 ):
     # Parse options JSON
     import json
@@ -1296,36 +1339,42 @@ async def update_question(
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid options format")
     
-    # Handle image upload
-    image_url = None
-    if image and image.filename:
-        image_url = await save_file(image, "questions")
-    
-    # Handle multiple description images
-    description_image_urls = []
-    if description_images and len(description_images) > 0:
-        for desc_image in description_images:
-            # Check if file exists and has content
-            if desc_image and desc_image.filename and desc_image.filename.strip():
-                try:
-                    desc_image_url = await save_file(desc_image, "questions")
-                    description_image_urls.append(desc_image_url)
-                except Exception as e:
-                    print(f"Error saving description image: {e}")
-                    continue
-    
-    # Get existing question to preserve image_url and description_images if no new ones are uploaded
+    # Get existing question first to preserve existing images
     existing_question = await db.test_questions.find_one({"_id": ObjectId(question_id)})
     if not existing_question:
         raise HTTPException(status_code=404, detail="Question not found")
     
-    # If no new image uploaded, keep existing image_url
-    if not image_url and existing_question.get("image_url"):
+    # Handle image upload - if new image uploaded, replace existing; otherwise keep existing
+    # If remove_image flag is set, remove the image
+    image_url = None
+    if remove_image == 'true':
+        image_url = None  # Explicitly remove image
+    elif image and image.filename:
+        image_url = await save_file(image, "questions")
+    elif existing_question.get("image_url"):
         image_url = existing_question["image_url"]
     
-    # If no new description images uploaded, keep existing ones
-    if not description_image_urls and existing_question.get("description_images"):
-        description_image_urls = existing_question["description_images"]
+    # Handle multiple description images - APPEND new ones to existing ones
+    # If remove_description_images flag is set, clear all description images
+    description_image_urls = []
+    if remove_description_images == 'true':
+        description_image_urls = []  # Explicitly remove all description images
+    else:
+        # Start with existing description images
+        if existing_question.get("description_images"):
+            description_image_urls = existing_question["description_images"].copy()
+        
+        # Append new description images
+        if description_images and len(description_images) > 0:
+            for desc_image in description_images:
+                # Check if file exists and has content
+                if desc_image and desc_image.filename and desc_image.filename.strip():
+                    try:
+                        desc_image_url = await save_file(desc_image, "questions")
+                        description_image_urls.append(desc_image_url)
+                    except Exception as e:
+                        print(f"Error saving description image: {e}")
+                        continue
     
     question_data = {
         "test_id": ObjectId(test_id),

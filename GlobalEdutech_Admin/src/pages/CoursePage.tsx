@@ -27,6 +27,7 @@ const CoursePage: React.FC = () => {
   });
   const [showSubCategories, setShowSubCategories] = useState<boolean>(false);
   const [thumbnail, setThumbnail] = useState<File | null>(null);
+  const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [feedbackOpen, setFeedbackOpen] = useState<boolean>(false);
   const [feedbackLoading, setFeedbackLoading] = useState<boolean>(false);
@@ -128,6 +129,15 @@ const CoursePage: React.FC = () => {
     return () => { active = false; };
   }, []);
 
+  // Cleanup thumbnail preview URL on unmount
+  useEffect(() => {
+    return () => {
+      if (thumbnailPreview) {
+        URL.revokeObjectURL(thumbnailPreview);
+      }
+    };
+  }, [thumbnailPreview]);
+
   const resetForm = (): void => {
     setEditing(null);
     setPayload({
@@ -135,6 +145,7 @@ const CoursePage: React.FC = () => {
       start_date: '', end_date: '', duration: '', instructor: '', price: 0,
     });
     setThumbnail(null);
+    setThumbnailPreview(null);
     setShowSubCategories(false);
   };
 
@@ -142,18 +153,19 @@ const CoursePage: React.FC = () => {
   const openEdit = (it: Course): void => {
     setEditing(it);
     setPayload({
-      name: it.name,
-      title: it.title,
-      description: it.description,
-      category: it.category,
-      sub_category: it.sub_category,
-      start_date: it.start_date,
-      end_date: it.end_date,
-      duration: it.duration,
-      instructor: it.instructor,
-      price: 0,
+      name: it.name || '',
+      title: it.title || '',
+      description: it.description || '',
+      category: it.category || '',
+      sub_category: it.sub_category || '',
+      start_date: it.start_date || '',
+      end_date: it.end_date || '',
+      duration: it.duration || '',
+      instructor: it.instructor || '',
+      price: it.price || 0,
     });
     setThumbnail(null);
+    setThumbnailPreview(null);
     setShowSubCategories(!!it.category);
     setFormOpen(true);
   };
@@ -165,13 +177,35 @@ const CoursePage: React.FC = () => {
     setError(null);
     try {
       if (editing) {
-        // For editing, only update the course data (thumbnail updates not supported yet)
+        // For editing, use FormData to support thumbnail updates
+        const formData = new FormData();
         if (thumbnail) {
-          setError('Thumbnail updates are not supported in edit mode. Please delete and recreate the course to change the thumbnail.');
-          setSubmitting(false);
-          return;
+          formData.append('thumbnail', thumbnail);
         }
-        await ApiService.updateCourse(editing._id, { ...payload, price: 0 } as any, token);
+        formData.append('name', payload.name);
+        formData.append('title', payload.title);
+        formData.append('description', payload.description);
+        formData.append('category', payload.category);
+        formData.append('sub_category', payload.sub_category);
+        formData.append('start_date', payload.start_date);
+        formData.append('end_date', payload.end_date);
+        formData.append('duration', payload.duration);
+        formData.append('instructor', payload.instructor);
+        formData.append('price', String(payload.price || 0));
+
+        const apiBase = import.meta.env.VITE_API_URL || import.meta.env.REACT_APP_API_URL || 'https://server.globaledutechlearn.com';
+        const response = await fetch(`${apiBase}/courses/${editing._id}`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          },
+          body: formData
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.message || 'Failed to update course');
+        }
       } else {
         if (!thumbnail) { setError('Thumbnail is required'); setSubmitting(false); return; }
         await ApiService.createCourse({ payload: { ...payload, price: 0 }, thumbnail }, token);
@@ -313,24 +347,24 @@ const CoursePage: React.FC = () => {
 
       {formOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" onClick={() => { setFormOpen(false); }}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <div className="px-6 py-4 border-b flex items-center justify-between bg-blue-900">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b flex items-center justify-between bg-blue-900 flex-shrink-0">
               <h3 className="text-xl font-bold text-white">{editing ? 'Edit Course' : 'Create Course'}</h3>
               <button className="text-yellow-400 hover:text-white" onClick={() => { setFormOpen(false); }}>{'✕'}</button>
             </div>
-            <div className="p-6">
+            <div className="p-6 overflow-y-auto flex-1">
               <form onSubmit={onSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Name</label>
-                  <input className="border rounded-lg px-3 py-2 w-full" placeholder="e.g., PUC1-SCI" value={payload.name} onChange={(e) => setPayload({ ...payload, name: e.target.value })} required />
+                  <input className="border rounded-lg px-3 py-2 w-full focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., PUC1-SCI" value={payload.name} onChange={(e) => setPayload({ ...payload, name: e.target.value })} required />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Title</label>
-                  <input className="border rounded-lg px-3 py-2 w-full" placeholder="e.g., I PUC Science" value={payload.title} onChange={(e) => setPayload({ ...payload, title: e.target.value })} required />
+                  <input className="border rounded-lg px-3 py-2 w-full focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., I PUC Science" value={payload.title} onChange={(e) => setPayload({ ...payload, title: e.target.value })} required />
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Description</label>
-                  <textarea className="border rounded-lg px-3 py-2 w-full h-28" placeholder="Brief description of the course" value={payload.description} onChange={(e) => setPayload({ ...payload, description: e.target.value })} required />
+                  <textarea className="border rounded-lg px-3 py-2 w-full h-28 focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Brief description of the course" value={payload.description} onChange={(e) => setPayload({ ...payload, description: e.target.value })} required />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Category</label>
@@ -392,48 +426,97 @@ const CoursePage: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Duration</label>
-                  <input className="border rounded-lg px-3 py-2 w-full" placeholder="e.g., 16 weeks" value={payload.duration} onChange={(e) => setPayload({ ...payload, duration: e.target.value })} required />
+                  <input className="border rounded-lg px-3 py-2 w-full focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., 16 weeks" value={payload.duration} onChange={(e) => setPayload({ ...payload, duration: e.target.value })} required />
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Instructor</label>
-                  <input className="border rounded-lg px-3 py-2 w-full" placeholder="Instructor name" value={payload.instructor} onChange={(e) => setPayload({ ...payload, instructor: e.target.value })} required />
+                  <input className="border rounded-lg px-3 py-2 w-full focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Instructor name" value={payload.instructor} onChange={(e) => setPayload({ ...payload, instructor: e.target.value })} required />
                 </div>
                 {/* Price removed - all courses are free */}
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">
-                    Thumbnail {editing && <span className="text-sm text-orange-600">(Cannot be changed in edit mode)</span>}
+                  <label className="block text-sm font-semibold text-gray-700 mb-3">
+                    Thumbnail {editing && <span className="text-sm text-gray-500 font-normal">(Select new image to replace current)</span>}
                   </label>
-                  <input 
-                    className={`border rounded-lg px-3 py-2 w-full focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                      editing ? 'bg-gray-100 cursor-not-allowed' : ''
-                    }`}
-                    type="file" 
-                    accept="image/*" 
-                    onChange={(e) => setThumbnail(e.target.files?.[0] || null)} 
-                    required={!editing}
-                    disabled={!!editing}
-                  />
+                  
+                  {/* Show current thumbnail when editing */}
                   {editing && (
-                    <div className="mt-2">
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Current Thumbnail</label>
-                      <div className="flex items-center gap-4">
+                    <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Current Thumbnail</label>
+                      <div className="relative inline-block">
                         <img 
                           src={ApiService.fileUrl((editing as Course).thumbnail_image) || ''} 
                           alt={(editing as Course).title} 
-                          className="w-36 h-20 object-cover rounded-md border" 
+                          className="w-48 h-32 object-cover rounded-lg border border-gray-300" 
                           onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} 
                         />
-                        <div className="text-sm text-gray-600">
-                          <p className="text-orange-600 font-medium">Thumbnail cannot be changed in edit mode.</p>
-                          <p className="text-gray-500">To change thumbnail, delete and recreate the course.</p>
-                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* File input for selecting new thumbnail */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      {editing ? 'Select New Thumbnail to Replace' : 'Select Thumbnail'}
+                    </label>
+                    <input 
+                      className="border rounded-lg px-3 py-2 w-full focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      type="file" 
+                      accept="image/*" 
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        setThumbnail(file);
+                        if (file) {
+                          // Cleanup previous preview
+                          if (thumbnailPreview) {
+                            URL.revokeObjectURL(thumbnailPreview);
+                          }
+                          setThumbnailPreview(URL.createObjectURL(file));
+                        } else {
+                          if (thumbnailPreview) {
+                            URL.revokeObjectURL(thumbnailPreview);
+                          }
+                          setThumbnailPreview(null);
+                        }
+                      }} 
+                      required={!editing}
+                    />
+                  </div>
+                  
+                  {/* Show preview of new thumbnail if selected */}
+                  {thumbnailPreview && (
+                    <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        {editing ? 'New Thumbnail Preview (will replace current)' : 'Thumbnail Preview'}
+                      </label>
+                      <div className="relative inline-block">
+                        <img 
+                          src={thumbnailPreview} 
+                          alt="Thumbnail preview" 
+                          className="w-48 h-32 object-cover rounded-lg border border-gray-300" 
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (thumbnailPreview) {
+                              URL.revokeObjectURL(thumbnailPreview);
+                            }
+                            setThumbnail(null);
+                            setThumbnailPreview(null);
+                            // Reset file input
+                            const fileInput = document.querySelector('input[type="file"][accept="image/*"]') as HTMLInputElement;
+                            if (fileInput) fileInput.value = '';
+                          }}
+                          className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white rounded-full w-7 h-7 flex items-center justify-center text-sm font-bold shadow-lg"
+                        >
+                          ×
+                        </button>
                       </div>
                     </div>
                   )}
                 </div>
-                <div className="col-span-1 md:col-span-2 flex items-center justify-between pt-2">
-                  <button type="button" onClick={() => { setFormOpen(false); resetForm(); }} className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Cancel</button>
-                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-yellow-500 text-white hover:bg-yellow-600 disabled:opacity-50">{submitting ? 'Saving...' : 'Save'}</button>
+                <div className="col-span-1 md:col-span-2 flex items-center justify-between pt-4 border-t border-gray-200">
+                  <button type="button" onClick={() => { setFormOpen(false); resetForm(); }} className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors">Cancel</button>
+                  <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-yellow-500 text-white hover:bg-yellow-600 disabled:opacity-50 transition-colors">{submitting ? 'Saving...' : 'Save'}</button>
                 </div>
               </form>
             </div>
